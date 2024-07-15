@@ -6,6 +6,7 @@ from langchain import hub
 from langchain_community.document_loaders import WebBaseLoader
 from langchain_community.vectorstores import Chroma
 import bs4
+import json
 from langchain_text_splitters.character import RecursiveCharacterTextSplitter
 from langchain_core.prompts import PromptTemplate
 from langchain_core.runnables import RunnableSequence
@@ -70,6 +71,16 @@ def getResponse(query, llm):
     return response
 
 def lambda_handler(event, context):
-    query = event.get("question")
+    body = json.loads(event.get('body', {}))
+    query = body.get('question', 'Parâmetro question não fonecido')
     response = getResponse(query,llm).content
-    return {"body": response, "status": 200}
+    return {
+            "statusCode": 200,
+            "header": {
+                "Content-Type": "application/json"
+            },
+            "body": json.dumps({
+                "message": "Tarefa concluída com sucesso",
+                "details": response,
+            })
+            }
