@@ -1,6 +1,1 @@
-curl -X POST "http://api-journeygenius-1199542108.us-east-2.elb.amazonaws.com"
-
--H "Content-Type: application/json" \
--d '{
-    "question": "vou viajar para Londres em Agosto de 2024. Quero que faça um roteiro de viagens para mim com eventos que irão ocorrer na data da viagem e com o preço da passagem"
-}'
+curl -X POST -H "Content-type:application/json" --data "{\"question\":\"vou viajar para Londres em Agosto de 2024. Quero que faça um roteiro de viagens para mim com eventos que irão ocorrer na data da viagem e com o preço da passagem\"}" http://api-journeygenius-1199542108.us-east-2.elb.amazonaws.com
