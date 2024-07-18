@@ -26,7 +26,7 @@ def researchAgent(query,llm):
     agent_executor = AgentExecutor(agent=agent, tools=tools, prompt=prompt, verbose=True )
     webContext = agent_executor.invoke({"input": query})
     return webContext['output']
-'''
+
 def loadData():
     loader = WebBaseLoader(
     web_paths=("https://www.dicasdeviagem.com/inglaterra/",),
@@ -44,34 +44,35 @@ def getRelevantDocs(query):
     retriever = loadData()
     relevant_documents = retriever.invoke(query)
     return relevant_documents
-'''
-def supervisorAgent(query, llm, webContext):
+
+def supervisorAgent(query, llm, webContext, relevant_documents):
     prompt_template= """
     Você é um agente de viagens. Sua resposta final deverá ser um roteiro de viagem completo e detalhado.
-    Utilize o contexto de eventos e preços de passagens e o input do usuário para elaborar o roteiro.
+    Utilize o contexto de eventos e preços de passagens, o input do usuário e também os documentos relevantes para elaborar o roteiro.
     Contexto: {webContext}
+    Documento relevante: {relevant_documents}
     Usuário: {query}
     Assistente: 
     """
     prompt = PromptTemplate(
-        input_variables= ['webContext', 'query'],
+        input_variables= ['webContext', 'relevant_documents', 'query'],
         template = prompt_template
     )
     sequence = RunnableSequence(
         prompt | llm
     )
-    response = sequence.invoke({"webContext": webContext, "query": query})
+    response = sequence.invoke({"webContext": webContext, "relevant_documents": relevant_documents, "query": query})
     return response
 
 def getResponse(query, llm):
     webContext = researchAgent(query, llm)
-    
-    response = supervisorAgent(query, llm, webContext)
+    relevant_documents = getRelevantDocs(query)
+    response = supervisorAgent(query, llm, webContext, relevant_documents)
     return response
 
 def lambda_handler(event, context):
     body = json.loads(event.get('body', {}))
-    query = body.get('question', 'Parâmetro question não fornecido')
+    query = body.get('question', 'Parâmetro question não fonecido')
     response = getResponse(query,llm).content
     return {
             "statusCode": 200,
