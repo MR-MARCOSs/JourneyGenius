@@ -27,47 +27,30 @@ def researchAgent(query,llm):
     webContext = agent_executor.invoke({"input": query})
     return webContext['output']
 
-def loadData():
-    loader = WebBaseLoader(
-    web_paths=("https://www.dicasdeviagem.com/inglaterra/",),
-    bs_kwargs=dict(parse_only=bs4.SoupStrainer(class_=("postcontentwrap", "pagetitleloading background-imaged loading-dark"))))
-    docs = loader.load()
-    text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
-    splits = text_splitter.split_documents(docs)
-    save_folder = "/tmp/chroma"
-    os.makedirs(save_folder, exist_ok=True)
-    vectorstore = Chroma.from_documents(documents=splits, embedding=OpenAIEmbeddings(), persist_directory=save_folder)
-    retriever = vectorstore.as_retriever()
-    return retriever
-
-def getRelevantDocs(query):
-    retriever = loadData()
-    relevant_documents = retriever.invoke(query)
-    return relevant_documents
-
-def supervisorAgent(query, llm, webContext, relevant_documents):
+def supervisorAgent(query, llm, webContext):
     prompt_template= """
     Você é um agente de viagens. Sua resposta final deverá ser um roteiro de viagem completo e detalhado.
-    Utilize o contexto de eventos e preços de passagens, o input do usuário e também os documentos relevantes para elaborar o roteiro.
+    Utilize o contexto de eventos e preços de passagens e o input do usuário para elaborar o roteiro.
     Contexto: {webContext}
-    Documento relevante: {relevant_documents}
     Usuário: {query}
     Assistente: 
     """
     prompt = PromptTemplate(
-        input_variables= ['webContext', 'relevant_documents', 'query'],
+        input_variables= ['webContext', 'query'],
+
+        
         template = prompt_template
     )
     sequence = RunnableSequence(
         prompt | llm
     )
-    response = sequence.invoke({"webContext": webContext, "relevant_documents": relevant_documents, "query": query})
+    response = sequence.invoke({"webContext": webContext, "query": query})
     return response
 
 def getResponse(query, llm):
     webContext = researchAgent(query, llm)
-    relevant_documents = getRelevantDocs(query)
-    response = supervisorAgent(query, llm, webContext, relevant_documents)
+   
+    response = supervisorAgent(query, llm, webContext)
     return response
 
 def lambda_handler(event, context):
