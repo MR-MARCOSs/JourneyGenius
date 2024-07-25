@@ -6,91 +6,156 @@ from langchain import hub
 from langchain_community.document_loaders import WebBaseLoader
 from langchain_community.vectorstores import Chroma
 import bs4
+import sqlite3
 from langchain_text_splitters.character import RecursiveCharacterTextSplitter
 from langchain_core.prompts import PromptTemplate
 from langchain_core.runnables import RunnableSequence
 
-
 llm = ChatOpenAI(model="gpt-3.5-turbo")
-query = """
-    Vou viajar para Tokyo em Agosto de 2024
-    Quero que faça um roteiro de viagens para mim com eventos que irão ocorrer na data da viagem e com o preço da passagem
-"""
-def researchAgent(query,llm): 
+
+def init_db():
+    conn = sqlite3.connect('JourneyGenius.db')
+    cursor = conn.cursor()
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS users (
+        user_id INTEGER PRIMARY KEY AUTOINCREMENT,
+        username TEXT NOT NULL,
+        email TEXT NOT NULL UNIQUE,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+    ''')
 
 
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS conversations (
+        conversation_id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL,
+        user_message TEXT NOT NULL,
+        ai_response TEXT NOT NULL,
+        FOREIGN KEY (user_id) REFERENCES users (user_id)
+    )
+    ''')
+    conn.close()
+
+def add_user(username, email):
+    conn = sqlite3.connect('JourneyGenius.db')
+    cursor = conn.cursor()
+
+    try:
+        cursor.execute('''
+            INSERT INTO users (username, email) 
+            VALUES (?, ?)
+        ''', (username, email))
+        conn.commit()
+        print("Usuário adicionado com sucesso.")
+
+    except sqlite3.IntegrityError as e:
+        print(f"Erro ao adicionar usuário: {e}")
+
+    finally:
+        conn.close()
+
+def add_conversation(user_id, user_message, ai_response):
+    conn = sqlite3.connect('JourneyGenius.db')
+    cursor = conn.cursor()
+
+    try:
+        cursor.execute('''
+            INSERT INTO conversations (user_id, user_message, ai_response) 
+            VALUES (?, ?, ?)
+        ''', (user_id, user_message, ai_response))
+        conn.commit()
+
+    except sqlite3.IntegrityError as e:
+        print(f"Erro ao adicionar conversa: {e}")
+
+    finally:
+        conn.close()
+
+def get_chat_history(user_id):
+    conn = sqlite3.connect('JourneyGenius.db')
+    cursor = conn.cursor()
+
+    cursor.execute('''
+        SELECT user_message, ai_response FROM conversations WHERE user_id = ? ORDER BY conversation_id
+    ''', (user_id,))
+
+    chat_history = cursor.fetchall()
+    conn.close()
+    
+
+    total_characters = sum(len(msg) + len(resp) for msg, resp in chat_history)
+    while total_characters > 8500 and len(chat_history) > 1:
+        chat_history.pop(0)
+        total_characters = sum(len(msg) + len(resp) for msg, resp in chat_history)
+
+    return chat_history
+
+def researchAgent(query, llm): 
     tools = load_tools(["ddg-search", "wikipedia"], llm=llm)
-
 
     prompt = hub.pull("hwchase17/react")
     agent = create_react_agent(
         llm,
         tools,
         prompt
-
     )
 
-
-    agent_executor = AgentExecutor(agent=agent, tools=tools, prompt=prompt, verbose=True )
+    agent_executor = AgentExecutor(agent=agent, tools=tools, prompt=prompt, verbose=True, handle_parsing_errors=True)
     webContext = agent_executor.invoke({"input": query})
     return webContext['output']
 
-
-def loadData():
-    loader = WebBaseLoader(
-    web_paths=("https://www.dicasdeviagem.com/inglaterra/",),
-    bs_kwargs=dict(parse_only=bs4.SoupStrainer(class_=("postcontentwrap", "pagetitleloading background-imaged loading-dark"))))
-    print("3")
-    docs = loader.load()
-    print("4")
-    text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
-    print("5")
-    splits = text_splitter.split_documents(docs)
-    print("6")
-    vectorstore = Chroma.from_documents(documents=splits, embedding=OpenAIEmbeddings())
-    print("7")
-    retriever = vectorstore.as_retriever()
-    print("8")
-    return retriever
-
-def getRelevantDocs(query):
-    print("1")
-    retriever = loadData()
-    print("2")
-    relevant_documents = retriever.invoke(query)
-    print("\n\n\n_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _")
-    print(relevant_documents)
-    return relevant_documents
-
-def supervisorAgent(query, llm, webContext, relevant_documents):
+def supervisorAgent(query, llm, webContext, chat_history):
     prompt_template= """
-    Você é um agente de viagens. Sua resposta final deverá ser um roteiro de viagem completo e detalhado.
-    Utilize o contexto de eventos e preços de passagens, o input do usuário e também os documentos relevantes para elaborar o roteiro.
-    Contexto: {webContext}
-    Documento relevante: {relevant_documents}
+    Você é o agente de viagens JourneyGenius. Sua resposta final deverá ser um roteiro de viagem completo e detalhado OU a continuação da conversa com o usuário.
+    Verifique primeiramente o histórico de conversa até o momento e o input
+    Utilize o contexto de eventos(se for útil), preços de passagens, input do usuário para elaborar o roteiro.
+    Histórico: {chat_history}
     Usuário: {query}
-    Assistente: 
+    Contexto: {webContext}
+    
+    JourneyGenius:
     """
 
+
+    formatted_chat_history = "\n".join(
+        f"Usuário: {msg}\nAssistente: {resp}" for msg, resp in chat_history
+    )
+
     prompt = PromptTemplate(
-        input_variables= ['webContext', 'relevant_documents', 'query'],
-        template = prompt_template
+        input_variables= ['webContext', 'query', 'chat_history'],
+        template=prompt_template
     )
 
     sequence = RunnableSequence(
         prompt | llm
     )
 
-    response = sequence.invoke({"webContext": webContext, "relevant_documents": relevant_documents, "query": query})
+    response = sequence.invoke({"webContext": webContext, "query": query, "chat_history": formatted_chat_history})
     return response
 
-def getResponse(query, llm):
+def getResponse(llm, user_id):
+    msg_count = 1
+    query = input("Diga: ")
+
     webContext = researchAgent(query, llm)
-    relevant_documents = getRelevantDocs(query)
-    response = supervisorAgent(query, llm, webContext, relevant_documents)
+
+
+    chat_history = get_chat_history(user_id)
+
+    response = supervisorAgent(query, llm, webContext, chat_history)
+
+
+    add_conversation(user_id, query, response.content)
+
     return response
 
+
+init_db()
+
+
+user_id = 1   
 
 print("\n\n\n_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _")
-print(getResponse(query, llm).content)
+print(getResponse(llm, user_id).content)
 print("finish")

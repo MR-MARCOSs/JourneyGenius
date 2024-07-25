@@ -22,9 +22,6 @@ class Llama3:
         response = requests.post(self.url, json=data)
         return response.json()["choices"][0]["text"]
 
-
-
-
 llm = Llama3()
 
 query = """
