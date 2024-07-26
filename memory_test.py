@@ -1,18 +1,16 @@
-import os
-from langchain_openai import ChatOpenAI, OpenAIEmbeddings
+import sqlite3
+import secrets
+from langchain_openai import ChatOpenAI
 from langchain_community.agent_toolkits.load_tools import load_tools
 from langchain.agents import create_react_agent, AgentExecutor
 from langchain import hub
-from langchain_community.document_loaders import WebBaseLoader
-from langchain_community.vectorstores import Chroma
-import bs4
-import sqlite3
-from langchain_text_splitters.character import RecursiveCharacterTextSplitter
 from langchain_core.prompts import PromptTemplate
 from langchain_core.runnables import RunnableSequence
 
+# Inicializa o modelo de linguagem
 llm = ChatOpenAI(model="gpt-3.5-turbo")
 
+# Inicializa o banco de dados
 def init_db():
     conn = sqlite3.connect('JourneyGenius.db')
     cursor = conn.cursor()
@@ -20,11 +18,10 @@ def init_db():
     CREATE TABLE IF NOT EXISTS users (
         user_id INTEGER PRIMARY KEY AUTOINCREMENT,
         username TEXT NOT NULL,
-        email TEXT NOT NULL UNIQUE,
+        token TEXT NOT NULL UNIQUE,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )
     ''')
-
 
     cursor.execute('''
     CREATE TABLE IF NOT EXISTS conversations (
@@ -37,15 +34,16 @@ def init_db():
     ''')
     conn.close()
 
-def add_user(username, email):
+# Adiciona um usuário ao banco de dados
+def add_user(username, token):
     conn = sqlite3.connect('JourneyGenius.db')
     cursor = conn.cursor()
 
     try:
         cursor.execute('''
-            INSERT INTO users (username, email) 
+            INSERT INTO users (username, token) 
             VALUES (?, ?)
-        ''', (username, email))
+        ''', (username, token))
         conn.commit()
         print("Usuário adicionado com sucesso.")
 
@@ -55,6 +53,29 @@ def add_user(username, email):
     finally:
         conn.close()
 
+# Obtém o ID de usuário associado ao token e ao nome de usuário fornecidos
+def get_user_id(username, token):
+    conn = sqlite3.connect('JourneyGenius.db')
+    cursor = conn.cursor()
+
+    cursor.execute('SELECT username FROM users WHERE token = ?', (token,))
+    user_record = cursor.fetchone()
+    print(user_record)
+
+    if user_record is None:
+        # Cadastra um novo usuário se o token não existir
+        add_user(username, token)
+        cursor.execute('SELECT user_id FROM users WHERE token = ?', (token,))
+        user_record = cursor.fetchone()
+    
+    elif user_record and username != user_record[0]:
+        # Erro se o token existe mas está associado a um nome de usuário diferente
+        raise ValueError("Token já existe para um usuário diferente.")
+    
+    conn.close()
+    return user_record[0]
+
+# Adiciona uma conversa ao banco de dados
 def add_conversation(user_id, user_message, ai_response):
     conn = sqlite3.connect('JourneyGenius.db')
     cursor = conn.cursor()
@@ -72,6 +93,7 @@ def add_conversation(user_id, user_message, ai_response):
     finally:
         conn.close()
 
+# Obtém o histórico de conversas do usuário
 def get_chat_history(user_id):
     conn = sqlite3.connect('JourneyGenius.db')
     cursor = conn.cursor()
@@ -83,7 +105,7 @@ def get_chat_history(user_id):
     chat_history = cursor.fetchall()
     conn.close()
     
-
+    # Limita o tamanho do histórico
     total_characters = sum(len(msg) + len(resp) for msg, resp in chat_history)
     while total_characters > 8500 and len(chat_history) > 1:
         chat_history.pop(0)
@@ -91,6 +113,7 @@ def get_chat_history(user_id):
 
     return chat_history
 
+# Realiza a pesquisa do agente de viagem
 def researchAgent(query, llm): 
     tools = load_tools(["ddg-search", "wikipedia"], llm=llm)
 
@@ -105,19 +128,19 @@ def researchAgent(query, llm):
     webContext = agent_executor.invoke({"input": query})
     return webContext['output']
 
+# Gera a resposta do agente supervisor
 def supervisorAgent(query, llm, webContext, chat_history):
     prompt_template= """
-    Você é o agente de viagens JourneyGenius. Sua resposta final deverá ser um roteiro de viagem completo e detalhado OU a continuação da conversa com o usuário.
-    Verifique primeiramente o histórico de conversa até o momento e o input
-    Utilize o contexto de eventos(se for útil), preços de passagens, input do usuário para elaborar o roteiro.
-    Histórico: {chat_history}
-    Usuário: {query}
+    Você é o agente de viagens JourneyGenius. Sua resposta final deverá ser um roteiro de viagem completo e detalhado ou a continuação da conversa com o usuário.
+    Utilize o contexto de eventos(se for útil), preços de passagens, input do usuário para elaborar o roteiro e o histórico de conversa até o momento.
+
     Contexto: {webContext}
-    
-    JourneyGenius:
+    Usuário: {query}
+    Histórico: {chat_history}
+    Assistente: 
     """
 
-
+    # Formata o histórico de chat para o prompt
     formatted_chat_history = "\n".join(
         f"Usuário: {msg}\nAssistente: {resp}" for msg, resp in chat_history
     )
@@ -134,28 +157,35 @@ def supervisorAgent(query, llm, webContext, chat_history):
     response = sequence.invoke({"webContext": webContext, "query": query, "chat_history": formatted_chat_history})
     return response
 
-def getResponse(llm, user_id):
-    msg_count = 1
-    query = input("Diga: ")
+# Processa a interação do usuário com o agente
+def process_interaction(username, token, query):
+    # Obtém o ID do usuário ou cadastra-o
+    user_id = get_user_id(username, token)
 
+    # Realiza a pesquisa do agente
     webContext = researchAgent(query, llm)
 
-
+    # Obtém o histórico de chat do banco de dados
     chat_history = get_chat_history(user_id)
 
+    # Gera a resposta do supervisor
     response = supervisorAgent(query, llm, webContext, chat_history)
 
-
+    # Adiciona a nova interação ao banco de dados
     add_conversation(user_id, query, response.content)
 
-    return response
+    return response.content
 
-
+# Inicializa o banco de dados
 init_db()
 
+# Exemplo de interação
+username = input("Nome de usuário: ")
+token = input("Token: ")
+query = input("Sua mensagem: ")
 
-user_id = 1   
-
-print("\n\n\n_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _")
-print(getResponse(llm, user_id).content)
-print("finish")
+try:
+    response = process_interaction(username, token, query)
+    print("Resposta do assistente:", response)
+except ValueError as e:
+    print("Erro:", e)
