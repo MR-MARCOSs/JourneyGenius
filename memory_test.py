@@ -58,20 +58,22 @@ def get_user_id(username, token):
     conn = sqlite3.connect('JourneyGenius.db')
     cursor = conn.cursor()
 
-    cursor.execute('SELECT username FROM users WHERE token = ?', (token,))
+    cursor.execute('SELECT * FROM users WHERE token = ? AND username = ?', (token, username))
     user_record = cursor.fetchone()
+    cursor.execute('SELECT * FROM users WHERE token = ?', (token,))
+    ver = cursor.fetchone()
     print(user_record)
+    #print(user_record[0])
 
-    if user_record is None:
+    if ver is None:
         # Cadastra um novo usuário se o token não existir
         add_user(username, token)
         cursor.execute('SELECT user_id FROM users WHERE token = ?', (token,))
         user_record = cursor.fetchone()
     
-    elif user_record and username != user_record[0]:
+    elif user_record!=ver:
+        raise ValueError("Token already exists")   
         # Erro se o token existe mas está associado a um nome de usuário diferente
-        raise ValueError("Token já existe para um usuário diferente.")
-    
     conn.close()
     return user_record[0]
 
