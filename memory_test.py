@@ -24,8 +24,8 @@ def init_db():
     ''')
 
     cursor.execute('''
-    CREATE TABLE IF NOT EXISTS conversations (
-        conversation_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    CREATE TABLE IF NOT EXISTS chat (
+        chat_id INTEGER PRIMARY KEY AUTOINCREMENT,
         user_id INTEGER NOT NULL,
         user_message TEXT NOT NULL,
         ai_response TEXT NOT NULL,
@@ -58,11 +58,11 @@ def get_user_id(username, token):
     conn = sqlite3.connect('JourneyGenius.db')
     cursor = conn.cursor()
 
-    cursor.execute('SELECT * FROM users WHERE token = ? AND username = ?', (token, username))
+    cursor.execute('SELECT user_id FROM users WHERE token = ? AND username = ?', (token, username))
     user_record = cursor.fetchone()
-    cursor.execute('SELECT * FROM users WHERE token = ?', (token,))
+    cursor.execute('SELECT user_id FROM users WHERE token = ?', (token,))
     ver = cursor.fetchone()
-    print(user_record)
+    #print(user_record[0])
     #print(user_record[0])
 
     if ver is None:
@@ -70,21 +70,30 @@ def get_user_id(username, token):
         add_user(username, token)
         cursor.execute('SELECT user_id FROM users WHERE token = ?', (token,))
         user_record = cursor.fetchone()
+        print(user_record)
     
     elif user_record!=ver:
         raise ValueError("Token already exists")   
         # Erro se o token existe mas está associado a um nome de usuário diferente
+
     conn.close()
     return user_record[0]
 
 # Adiciona uma conversa ao banco de dados
-def add_conversation(user_id, user_message, ai_response):
+def add_chat(user_id, user_message, ai_response):
     conn = sqlite3.connect('JourneyGenius.db')
     cursor = conn.cursor()
+    cursor.execute('SELECT user_message, ai_response FROM chat WHERE user_id = ?', (user_id,))
+    all_chat=cursor.fetchall()
+    print("todo o chat:\n")
+    print(all_chat)
+    carac_count = str(all_chat)
+    print(len(str(all_chat)))
+
 
     try:
         cursor.execute('''
-            INSERT INTO conversations (user_id, user_message, ai_response) 
+            INSERT INTO chat (user_id, user_message, ai_response) 
             VALUES (?, ?, ?)
         ''', (user_id, user_message, ai_response))
         conn.commit()
@@ -93,6 +102,12 @@ def add_conversation(user_id, user_message, ai_response):
         print(f"Erro ao adicionar conversa: {e}")
 
     finally:
+        while len(carac_count) > 8000:
+            cursor.execute('DELETE FROM chat WHERE chat_id = (SELECT MIN(chat_id) FROM chat)') 
+            cursor.execute('SELECT user_message, ai_response FROM chat WHERE user_id = ?', (user_id,))
+            all_chat=cursor.fetchone()
+            carac_count = str(all_chat)
+        print(carac_count)    
         conn.close()
 
 # Obtém o histórico de conversas do usuário
@@ -101,17 +116,13 @@ def get_chat_history(user_id):
     cursor = conn.cursor()
 
     cursor.execute('''
-        SELECT user_message, ai_response FROM conversations WHERE user_id = ? ORDER BY conversation_id
+        SELECT user_message, ai_response FROM chat WHERE user_id = ? ORDER BY chat_id
     ''', (user_id,))
 
     chat_history = cursor.fetchall()
     conn.close()
     
     # Limita o tamanho do histórico
-    total_characters = sum(len(msg) + len(resp) for msg, resp in chat_history)
-    while total_characters > 8500 and len(chat_history) > 1:
-        chat_history.pop(0)
-        total_characters = sum(len(msg) + len(resp) for msg, resp in chat_history)
 
     return chat_history
 
@@ -134,7 +145,7 @@ def researchAgent(query, llm):
 def supervisorAgent(query, llm, webContext, chat_history):
     prompt_template= """
     Você é o agente de viagens JourneyGenius. Sua resposta final deverá ser um roteiro de viagem completo e detalhado ou a continuação da conversa com o usuário.
-    Utilize o contexto de eventos(se for útil), preços de passagens, input do usuário para elaborar o roteiro e o histórico de conversa até o momento.
+    Utilize o contexto de eventos(se for útil), preços de passagens, o histórico da conversa com você até o momento e principalmente o input do usuário.
 
     Contexto: {webContext}
     Usuário: {query}
@@ -142,10 +153,7 @@ def supervisorAgent(query, llm, webContext, chat_history):
     Assistente: 
     """
 
-    # Formata o histórico de chat para o prompt
-    formatted_chat_history = "\n".join(
-        f"Usuário: {msg}\nAssistente: {resp}" for msg, resp in chat_history
-    )
+
 
     prompt = PromptTemplate(
         input_variables= ['webContext', 'query', 'chat_history'],
@@ -156,7 +164,7 @@ def supervisorAgent(query, llm, webContext, chat_history):
         prompt | llm
     )
 
-    response = sequence.invoke({"webContext": webContext, "query": query, "chat_history": formatted_chat_history})
+    response = sequence.invoke({"webContext": webContext, "query": query, "chat_history": chat_history})
     return response
 
 # Processa a interação do usuário com o agente
@@ -174,7 +182,7 @@ def process_interaction(username, token, query):
     response = supervisorAgent(query, llm, webContext, chat_history)
 
     # Adiciona a nova interação ao banco de dados
-    add_conversation(user_id, query, response.content)
+    add_chat(user_id, query, response.content)
 
     return response.content
 
