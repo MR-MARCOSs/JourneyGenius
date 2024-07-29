@@ -83,19 +83,24 @@ def get_user_id(username, token):
 def add_chat(user_id, user_message, ai_response):
     conn = sqlite3.connect('JourneyGenius.db')
     cursor = conn.cursor()
+    cursor.execute('SELECT COUNT(*) FROM chat WHERE user_id = ?', (user_id,))
+    message_number=cursor.fetchone()[0]
+    print(message_number)
     cursor.execute('SELECT user_message, ai_response FROM chat WHERE user_id = ?', (user_id,))
     all_chat=cursor.fetchall()
     print("todo o chat:\n")
     print(all_chat)
     carac_count = str(all_chat)
     print(len(str(all_chat)))
+    formatted_user_message = f"{message_number}º mensagem: {user_message}"
+    formatted_ai_response = f"tua resposta a {message_number}º mensagem: {ai_response}"
 
 
     try:
         cursor.execute('''
             INSERT INTO chat (user_id, user_message, ai_response) 
             VALUES (?, ?, ?)
-        ''', (user_id, user_message, ai_response))
+        ''', (user_id, formatted_user_message, formatted_ai_response))
         conn.commit()
 
     except sqlite3.IntegrityError as e:
@@ -108,7 +113,7 @@ def add_chat(user_id, user_message, ai_response):
             all_chat=cursor.fetchall()
             carac_count = str(all_chat)
             conn.commit()
-            print("\ncu")
+            print("\nteste")
         print(carac_count)    
         conn.close()
 
