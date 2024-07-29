@@ -102,11 +102,13 @@ def add_chat(user_id, user_message, ai_response):
         print(f"Erro ao adicionar conversa: {e}")
 
     finally:
-        while len(carac_count) > 8000:
+        while len(carac_count) > 7000:
             cursor.execute('DELETE FROM chat WHERE chat_id = (SELECT MIN(chat_id) FROM chat)') 
             cursor.execute('SELECT user_message, ai_response FROM chat WHERE user_id = ?', (user_id,))
-            all_chat=cursor.fetchone()
+            all_chat=cursor.fetchall()
             carac_count = str(all_chat)
+            conn.commit()
+            print("\ncu")
         print(carac_count)    
         conn.close()
 
