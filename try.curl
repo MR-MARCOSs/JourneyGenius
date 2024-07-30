@@ -1,1 +1,2 @@
 curl -X POST -H "Content-type:application/json" --data "{\"question\":\"vou viajar para Londres em Agosto de 2024. Quero que faça um roteiro de viagens para mim com eventos que irão ocorrer na data da viagem e com o preço da passagem\"}" http://api-journeygenius-1199542108.us-east-2.elb.amazonaws.com
+curl -X POST -H "Content-Type: application/json" -d "{\"username\":\"testuser\", \"token\":\"sometoken1\", \"query\":\"Essa é minha mensagem de número...?\"}" http://127.0.0.1:5000/interact
