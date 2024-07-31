@@ -1,13 +1,21 @@
 import sqlite3
-import secrets
+import json
+from langchain.chains import LLMMathChain
+from langchain.tools import Tool
+from langchain.agents import load_tools, initialize_agent
 from langchain_openai import ChatOpenAI
 from langchain_community.agent_toolkits.load_tools import load_tools
 from langchain.agents import create_react_agent, AgentExecutor
 from langchain import hub
+#from duckduckgo_search import DDGS
+from duckduckgo_search import DDGS
 from langchain_core.prompts import PromptTemplate
 from langchain_core.runnables import RunnableSequence
 
-llm = ChatOpenAI(model="gpt-3.5-turbo")
+# Configura o modelo model
+model = ChatOpenAI(model="gpt-3.5-turbo")
+
+
 
 def init_db():
     conn = sqlite3.connect('JourneyGenius.db')
@@ -20,7 +28,6 @@ def init_db():
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )
     ''')
-
     cursor.execute('''
     CREATE TABLE IF NOT EXISTS chat (
         chat_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -35,26 +42,20 @@ def init_db():
 def add_user(username, token):
     conn = sqlite3.connect('JourneyGenius.db')
     cursor = conn.cursor()
-
     try:
         cursor.execute('''
             INSERT INTO users (username, token) 
             VALUES (?, ?)
         ''', (username, token))
         conn.commit()
-        print("Usuário adicionado com sucesso.")
-
     except sqlite3.IntegrityError as e:
         print(f"Erro ao adicionar usuário: {e}")
-
     finally:
         conn.close()
-
 
 def get_user_id(username, token):
     conn = sqlite3.connect('JourneyGenius.db')
     cursor = conn.cursor()
-
     cursor.execute('SELECT user_id FROM users WHERE token = ? AND username = ?', (token, username))
     user_record = cursor.fetchone()
     cursor.execute('SELECT user_id FROM users WHERE token = ?', (token,))
@@ -64,10 +65,9 @@ def get_user_id(username, token):
         add_user(username, token)
         cursor.execute('SELECT user_id FROM users WHERE token = ?', (token,))
         user_record = cursor.fetchone()
-        print(user_record)
     
-    elif user_record!=ver:
-        raise ValueError("Token already exists")   
+    elif user_record != ver:
+        raise ValueError("Token already exists")
 
     conn.close()
     return user_record[0]
@@ -76,17 +76,12 @@ def add_chat(user_id, user_message, ai_response):
     conn = sqlite3.connect('JourneyGenius.db')
     cursor = conn.cursor()
     cursor.execute('SELECT COUNT(*) FROM chat WHERE user_id = ?', (user_id,))
-    message_number=cursor.fetchone()[0] + 1 
-    print(message_number)
+    message_number = cursor.fetchone()[0] + 1
     cursor.execute('SELECT user_message, ai_response FROM chat WHERE user_id = ?', (user_id,))
-    all_chat=cursor.fetchall()
-    print("todo o chat:\n")
-    print(all_chat)
+    all_chat = cursor.fetchall()
     carac_count = str(all_chat)
-    print(len(str(all_chat)))
     formatted_user_message = f"{message_number}º mensagem: {user_message}"
     formatted_ai_response = f"tua resposta a {message_number}º mensagem: {ai_response}"
-
 
     try:
         cursor.execute('''
@@ -94,87 +89,61 @@ def add_chat(user_id, user_message, ai_response):
             VALUES (?, ?, ?)
         ''', (user_id, formatted_user_message, formatted_ai_response))
         conn.commit()
-
-    except sqlite3.IntegrityError as e:
-        print(f"Erro ao adicionar conversa: {e}")
-
     finally:
         while len(carac_count) > 7000:
-            cursor.execute('DELETE FROM chat WHERE chat_id = (SELECT MIN(chat_id) FROM chat)') 
+            cursor.execute('DELETE FROM chat WHERE chat_id = (SELECT MIN(chat_id) FROM chat)')
             cursor.execute('SELECT user_message, ai_response FROM chat WHERE user_id = ?', (user_id,))
-            all_chat=cursor.fetchall()
+            all_chat = cursor.fetchall()
             carac_count = str(all_chat)
             conn.commit()
-            print("\nteste")
-        print(carac_count)    
         conn.close()
 
 def get_chat_history(user_id):
     conn = sqlite3.connect('JourneyGenius.db')
     cursor = conn.cursor()
-
     cursor.execute('''
         SELECT user_message, ai_response FROM chat WHERE user_id = ? ORDER BY chat_id
     ''', (user_id,))
-
     chat_history = cursor.fetchall()
     conn.close()
-
     return chat_history
 
-def researchAgent(query, llm): 
-    tools = load_tools(["ddg-search", "wikipedia"], llm=llm)
-
-    prompt = hub.pull("hwchase17/react")
-    agent = create_react_agent(
-        llm,
-        tools,
-        prompt
-    )
-
-    agent_executor = AgentExecutor(agent=agent, tools=tools, prompt=prompt, verbose=True, handle_parsing_errors=True)
-    webContext = agent_executor.invoke({"input": query})
-    return webContext['output']
-
-def supervisorAgent(query, llm, webContext, chat_history):
-    prompt_template= """
+def supervisorAgent(query, model_with_tools, chat_history):
+    prompt_template = """
     Você é o agente de viagens JourneyGenius. Sua resposta final deverá ser um roteiro de viagem completo e detalhado ou a continuação da conversa com o usuário.
     Utilize o contexto de eventos(se for útil), preços de passagens, o histórico da conversa com você até o momento e principalmente o input do usuário.
 
-    Contexto: {webContext}
     Usuário: {query}
-    Histórico: {chat_history}
-    Assistente: 
+    Histórico: {chat_history} 
     """
 
-
-
     prompt = PromptTemplate(
-        input_variables= ['webContext', 'query', 'chat_history'],
+        input_variables=['query', 'chat_history'],
         template=prompt_template
     )
+    sequence = RunnableSequence(prompt | model_with_tools)
+    response = sequence.invoke({"query": query, "chat_history": chat_history})
 
-    sequence = RunnableSequence(
-        prompt | llm
-    )
-
-    response = sequence.invoke({"webContext": webContext, "query": query, "chat_history": chat_history})
+    print(f"Content: {response['content']}")
+    print(f"Tool calls: {json.dumps(response['tool_calls'], indent=2)}")
     return response
 
 def process_interaction(username, token, query):
-
+    search = DDGS().text(query) 
+    tools = [
+        Tool(
+            name="ddg-search",
+            description="A tool for searching the web using DuckDuckGo.",
+            func=search.run,  
+        ),
+    ]
+    model_with_tools=model.bind_tools(tools)
     user_id = get_user_id(username, token)
-
-    webContext = researchAgent(query, llm)
-
+    #webContext = model_tools(query, model_with_tools)
     chat_history = get_chat_history(user_id)
-
-    response = supervisorAgent(query, llm, webContext, chat_history)
-
+    response = supervisorAgent(query, model_with_tools, chat_history)
     add_chat(user_id, query, response.content)
-
     return response.content
-
 init_db()
 
 username = input("Nome de usuário: ")
