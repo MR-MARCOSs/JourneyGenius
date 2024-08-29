@@ -1,14 +1,10 @@
 import sqlite3
-import json
-from langchain.chains import LLMMathChain
-from langchain.tools import Tool
-from langchain.agents import load_tools, initialize_agent
+
+from langchain_community.tools import DuckDuckGoSearchRun
+from langchain.agents import Tool, initialize_agent
+from langchain.memory import ConversationBufferWindowMemory  # Classe base para ferramentas
 from langchain_openai import ChatOpenAI
-from langchain_community.agent_toolkits.load_tools import load_tools
-from langchain.agents import create_react_agent, AgentExecutor
-from langchain import hub
-#from duckduckgo_search import DDGS
-from duckduckgo_search import DDGS
+# Removido a importação duplicada e desnecessária de load_tools
 from langchain_core.prompts import PromptTemplate
 from langchain_core.runnables import RunnableSequence
 
@@ -124,26 +120,33 @@ def supervisorAgent(query, model_with_tools, chat_history):
     sequence = RunnableSequence(prompt | model_with_tools)
     response = sequence.invoke({"query": query, "chat_history": chat_history})
 
-    print(f"Content: {response['content']}")
-    print(f"Tool calls: {json.dumps(response['tool_calls'], indent=2)}")
+    #print(f"Content: {response['content']}")
+    #print(f"Tool calls: {json.dumps(response['tool_calls'], indent=2)}")
     return response
 
-def process_interaction(username, token, query):
-    search = DDGS().text(query) 
-    tools = [
-        Tool(
-            name="ddg-search",
-            description="A tool for searching the web using DuckDuckGo.",
-            func=search.run,  
-        ),
-    ]
-    model_with_tools=model.bind_tools(tools)
-    user_id = get_user_id(username, token)
-    #webContext = model_tools(query, model_with_tools)
-    chat_history = get_chat_history(user_id)
-    response = supervisorAgent(query, model_with_tools, chat_history)
-    add_chat(user_id, query, response.content)
-    return response.content
+def process_interaction(username, token, query, model):
+    ddg_search=DuckDuckGoSearchRun()
+    search=Tool(
+            name="search",
+            func=ddg_search.run,
+            description="useful when you need information about current events"
+        )
+    tools = [search]
+    memory = ConversationBufferWindowMemory(
+        memory_key='chat_history',
+        k=3,
+        return_messages=True,
+    )
+    conversational_agent = initialize_agent(
+        agent='chat-conversational-react-description',
+        tools=tools,
+        llm=model,
+        verbose=True,
+        max_iterations=3,
+        early_stopping_method='generate',
+        memory=memory
+    )
+    conversational_agent("You are a travel agent, your answer may be")
 init_db()
 
 username = input("Nome de usuário: ")
@@ -151,7 +154,7 @@ token = input("Token: ")
 query = input("Sua mensagem: ")
 
 try:
-    response = process_interaction(username, token, query)
+    response = process_interaction(username, token, query, model)
     print("Resposta do assistente:", response)
 except ValueError as e:
     print("Erro:", e)

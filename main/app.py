@@ -1,4 +1,5 @@
 from flask import Flask, request, jsonify
+from langchain.utilities import PythonREPL
 import sqlite3
 import secrets
 from langchain_openai import ChatOpenAI
@@ -12,6 +13,7 @@ app = Flask(__name__)
 
 # Configura o modelo LLM
 llm = ChatOpenAI(model="gpt-3.5-turbo")
+python_repl = PythonREPL()
 
 def init_db():
     conn = sqlite3.connect('JourneyGenius.db')
