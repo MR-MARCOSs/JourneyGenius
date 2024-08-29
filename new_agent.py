@@ -3,25 +3,30 @@ from langchain import hub
 from langchain.agents import create_openai_functions_agent, AgentExecutor
 from langchain_community.tools import DuckDuckGoSearchRun
 from langchain.agents import Tool, initialize_agent
-from langchain.memory import ConversationBufferWindowMemory  # Classe base para ferramentas
+from langchain.memory import ConversationBufferWindowMemory
 from langchain_openai import ChatOpenAI
-# Removido a importação duplicada e desnecessária de load_tools
 from langchain_core.prompts import PromptTemplate
 
-
-# Configura o modelo model
 model = ChatOpenAI(model="gpt-4o")
-
 
 def process_interaction(query, model):
     search = DuckDuckGoSearchRun()
     tools = [search]
+
+    template = """You are a nice chatbot having a conversation with a human.
+
+    Previous conversation:
+    {chat_history}
+
+    New human question: {question}
+    Response:"""
+
+    prompt = PromptTemplate.from_template(template)
     memory = ConversationBufferWindowMemory(
         memory_key='chat_history',
         k=3,
         return_messages=True,
     )
-    prompt = hub.pull('hwchase17/openai-functions-agent')
     conversational_agent = create_openai_functions_agent(
         prompt=prompt,
         tools=tools,
@@ -29,6 +34,7 @@ def process_interaction(query, model):
     )
     agent_executor = AgentExecutor(agent=conversational_agent, tools=tools, verbose=True, max_iterations=3, early_stopping_method='generate', memory=memory)
     agent_executor.invoke({'input':query})
+
 
 
 

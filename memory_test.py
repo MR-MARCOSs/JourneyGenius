@@ -125,12 +125,7 @@ def supervisorAgent(query, model_with_tools, chat_history):
     return response
 
 def process_interaction(username, token, query, model):
-    ddg_search=DuckDuckGoSearchRun()
-    search=Tool(
-            name="search",
-            func=ddg_search.run,
-            description="useful when you need information about current events"
-        )
+    search=DuckDuckGoSearchRun()
     tools = [search]
     memory = ConversationBufferWindowMemory(
         memory_key='chat_history',
